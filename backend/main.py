@@ -1,12 +1,16 @@
-import uuid
 from datetime import datetime
 from typing import List
 from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 from database import session, engine
 import database_model
 import models
+import redis
+import json
+
+
 
 try:
     database_model.Base.metadata.create_all(bind=engine)
@@ -87,12 +91,12 @@ def init_db():
     try:
         count = db.query(database_model.Day).count()
         if count == 0:
-            for day in days_db:
+            for index, day in enumerate(days_db):
                 # Copy to avoid mutating the in-memory days_db
                 day_copy = day.copy()
                 expense_data = day_copy.pop("expenses", [])
                 
-                # Exclude created_at and id from the DB constructor since DB auto-generates them
+                # Exclude created_at and id from the DB constructor since DB auto-generates created_at
                 day_copy.pop("id", None)
                 day_copy.pop("created_at", None)
                 
@@ -104,7 +108,10 @@ def init_db():
                     expense_copy = expense.copy()
                     expense_copy.pop("id", None)
                     expense_copy.pop("day_id", None)
-                    new_expense = database_model.Expense(day_id=new_day.id, **expense_copy)
+                    new_expense = database_model.Expense(
+                        day_id=new_day.id,
+                        **expense_copy
+                    )
                     db.add(new_expense)
             db.commit()
             print("Database successfully seeded with default days.")
@@ -118,6 +125,35 @@ try:
     init_db()
 except Exception as e:
     print(f"Error initializing/seeding database: {e}")
+    
+    
+# Initialize Redis client and ping on startup to determine if Redis is online
+redis_client = None
+try:
+    client = redis.Redis(
+        host="127.0.0.1", 
+        port=6379, 
+        db=0, 
+        decode_responses=True,
+        socket_timeout=1.0,           # 1 second timeout on commands
+        socket_connect_timeout=1.0,   # 1 second timeout on connection attempts
+        retry_on_timeout=False,       # Do not retry on timeouts
+        retry=None                    # Disable retry attempts to fail fast
+    )
+    client.ping()                     # Active check to confirm connection
+    redis_client = client
+    print("Redis server connected successfully. Caching is enabled.")
+except Exception as e:
+    print(f"Redis server is offline: {e}. Caching is disabled (falling back to direct DB access).")
+    redis_client = None
+
+# Helper to safely invalidate cache on day/expense modifications
+def invalidate_cache():
+    if redis_client:
+        try:
+            redis_client.delete("all_days")
+        except Exception as e:
+            print(f"Redis cache invalidation error: {e}")
     
 
 # Helper function to format dates to match frontend format (e.g. "July 13, 2026")
@@ -134,27 +170,45 @@ def get_formatted_today() -> str:
 @app.get("/api/days", response_model=List[models.Day])
 def get_days(db: Session = Depends(get_db)):
     """Retrieve all Day cards and their associated expense history from the database."""
+    if redis_client:
+        try:
+            cache_day = redis_client.get("all_days")
+            if cache_day:
+                return json.loads(cache_day)
+        except Exception as e:
+            print(f"Redis cache fetch error: {e}")
+
     days = db.query(database_model.Day).all()
+    
+    if redis_client:
+        try:
+            days_data = [models.Day.from_orm(d).dict() for d in days]
+            redis_client.setex("all_days", 3600, json.dumps(days_data, default=str))
+        except Exception as e:
+            print(f"Redis cache store error: {e}")
+            
     return days
 
 @app.post("/api/days", response_model=models.Day, status_code=status.HTTP_201_CREATED)
 def create_day(db: Session = Depends(get_db)):
     """
     Create a new Day card.
-    The ID, Title, Date, and Gradient Color are auto-generated and stored in the database.
+    The ID is auto-incremented by the database, and the Title is calculated
+    based on the maximum day number in existing titles.
     """
-    # 1. Query all days from the database to determine next sequence number
     db_days = db.query(database_model.Day).all()
     next_num = 1
     if db_days:
         import re
-        day_nums = []
+        max_seen = 0
         for day in db_days:
             match = re.search(r"Day\s+(\d+)", day.title, re.IGNORECASE)
-            day_nums.append(int(match.group(1)) if match else 0)
-        next_num = max(day_nums) + 1 if day_nums else 1
-
-    # 2. Setup auto-generated parameters
+            num = int(match.group(1)) if match else 0
+            if num > max_seen:
+                max_seen = num
+        next_num = max_seen + 1
+            
+    # Setup auto-generated parameters
     title = f"Day {next_num}"
     date = get_formatted_today()
     
@@ -162,7 +216,7 @@ def create_day(db: Session = Depends(get_db)):
     color_index = (next_num - 1) % len(GRADIENTS)
     color = GRADIENTS[color_index]
 
-    # 3. Create database record
+    # Create database record (let database handle ID auto-increment)
     db_day = database_model.Day(
         title=title,
         date=date,
@@ -171,6 +225,8 @@ def create_day(db: Session = Depends(get_db)):
     db.add(db_day)
     db.commit()
     db.refresh(db_day)
+    
+    invalidate_cache()
     return db_day
 
 @app.delete("/api/days/{day_id}", status_code=status.HTTP_204_NO_CONTENT)
@@ -184,19 +240,18 @@ def delete_day(day_id: int, db: Session = Depends(get_db)):
         )
     db.delete(db_day)
     db.commit()
+    invalidate_cache()
     return
 
+
+# In main.py
 @app.post("/api/days/{day_id}/expenses", response_model=models.Expense, status_code=status.HTTP_201_CREATED)
 def add_expense(day_id: int, expense_payload: models.ExpenseCreate, db: Session = Depends(get_db)):
-    """Add a new expense item to a specific day card in the database."""
-    # Find the day card to ensure it exists
     db_day = db.query(database_model.Day).filter(database_model.Day.id == day_id).first()
     if not db_day:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Day card with ID '{day_id}' not found."
-        )
-
+        raise HTTPException(status_code=404, detail="Day not found")
+    
+    # No max_id queries or next_id calculation needed!
     db_expense = database_model.Expense(
         day_id=day_id,
         category=expense_payload.category,
@@ -206,6 +261,7 @@ def add_expense(day_id: int, expense_payload: models.ExpenseCreate, db: Session 
     db.add(db_expense)
     db.commit()
     db.refresh(db_expense)
+    invalidate_cache()
     return db_expense
 
 
@@ -228,6 +284,7 @@ def edit_expense(day_id: int, expense_id: int, expense_payload: models.ExpenseCr
     db_expense.amount = expense_payload.amount
     db.commit()
     db.refresh(db_expense)
+    invalidate_cache()
     return db_expense
 
 
@@ -246,4 +303,5 @@ def delete_expense(day_id: int, expense_id: int, db: Session = Depends(get_db)):
         )
     db.delete(db_expense)
     db.commit()
+    invalidate_cache()
     return

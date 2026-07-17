@@ -1,6 +1,6 @@
 import { useState, useEffect } from "react"
 import { Component as MorphingCardStack } from "@/components/ui/morphing-card-stack"
-import { TrendingUp, Award, DollarSign, CalendarRange } from "lucide-react"
+import { TrendingUp, Award, DollarSign, CalendarRange, Search, X, Calendar } from "lucide-react"
 
 // Gradient presets for a premium, harmonized look
 const GRADIENTS = [
@@ -36,131 +36,162 @@ const DEFAULT_DAYS = [
   },
 ]
 
-export default function DemoOne() {
-  const [days, setDays] = useState(() => {
-    try {
-      const saved = localStorage.getItem("expenseflow_days")
-      return saved ? JSON.parse(saved) : DEFAULT_DAYS
-    } catch (e) {
-      console.error("Error loading days from localStorage:", e)
-      return DEFAULT_DAYS
-    }
-  })
+const API_BASE_URL = "http://127.0.0.1:8000/api"
 
-  // Save to localStorage on change
+export default function DemoOne() {
+  const [days, setDays] = useState([])
+  const [deleteConfirmOpen, setDeleteConfirmOpen] = useState(false)
+  const [dayToDelete, setDayToDelete] = useState(null)
+  const [selectedRawDate, setSelectedRawDate] = useState("")
+
+  // Convert YYYY-MM-DD input value to database format "Month D, YYYY" (e.g. "July 8, 2026")
+  const formatDateToDb = (dateStr) => {
+    if (!dateStr) return "";
+    const [year, month, day] = dateStr.split("-");
+    const dateObj = new Date(parseInt(year, 10), parseInt(month, 10) - 1, parseInt(day, 10));
+    const monthName = dateObj.toLocaleString("en-US", { month: "long" });
+    return `${monthName} ${parseInt(day, 10)}, ${year}`;
+  };
+
+  // Filter day cards according to selected search date
+  const filteredDays = selectedRawDate
+    ? days.filter(day => {
+        const targetFormatted = formatDateToDb(selectedRawDate);
+        return day.date.toLowerCase() === targetFormatted.toLowerCase();
+      })
+    : days;
+
+  // Fetch days from the backend database on mount
   useEffect(() => {
-    try {
-      localStorage.setItem("expenseflow_days", JSON.stringify(days))
-    } catch (e) {
-      console.error("Error saving days to localStorage:", e)
+    const fetchDays = async () => {
+      try {
+        const response = await fetch(`${API_BASE_URL}/days`)
+        if (!response.ok) throw new Error("Failed to fetch days")
+        const data = await response.json()
+        setDays(data)
+      } catch (e) {
+        console.error("Error loading days from backend:", e)
+      }
     }
-  }, [days])
+    fetchDays()
+  }, [])
 
   // Handlers
-  const handleAddExpense = (dayId, expenseData) => {
-    setDays((prevDays) =>
-      prevDays.map((day) => {
-        if (day.id === dayId) {
-          const newExpense = {
-            id: `exp-${Date.now()}-${Math.random().toString(36).substr(2, 9)}`,
-            ...expenseData,
-          }
-          return {
-            ...day,
-            expenses: [...day.expenses, newExpense],
-          }
-        }
-        return day
+  const handleAddExpense = async (dayId, expenseData) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/days/${dayId}/expenses`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(expenseData),
       })
-    )
+      if (!response.ok) throw new Error("Failed to add expense")
+      const newExpense = await response.json()
+      
+      setDays((prevDays) =>
+        prevDays.map((day) => {
+          if (day.id === dayId) {
+            return {
+              ...day,
+              expenses: [...day.expenses, newExpense],
+            }
+          }
+          return day
+        })
+      )
+    } catch (e) {
+      console.error("Error adding expense:", e)
+    }
   }
 
-  const handleDeleteExpense = (dayId, expenseId) => {
-    setDays((prevDays) =>
-      prevDays.map((day) => {
-        if (day.id === dayId) {
-          return {
-            ...day,
-            expenses: day.expenses.filter((exp) => exp.id !== expenseId),
-          }
-        }
-        return day
+  const handleDeleteExpense = async (dayId, expenseId) => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/days/${dayId}/expenses/${expenseId}`, {
+        method: "DELETE",
       })
-    )
+      if (!response.ok) throw new Error("Failed to delete expense")
+      
+      setDays((prevDays) =>
+        prevDays.map((day) => {
+          if (day.id === dayId) {
+            return {
+              ...day,
+              expenses: day.expenses.filter((exp) => exp.id !== expenseId),
+            }
+          }
+          return day
+        })
+      )
+    } catch (e) {
+      console.error("Error deleting expense:", e)
+    }
   }
 
   const handleDeleteDay = (dayId) => {
-    if (confirm("Are you sure you want to delete this entire day and all its expenses?")) {
-      setDays((prevDays) => prevDays.filter((day) => day.id !== dayId))
-    }
+    setDayToDelete(dayId)
+    setDeleteConfirmOpen(true)
   }
 
-  const handleAddDay = () => {
-    let nextNum = 1
-    let lastDateStr = "July 9, 2026"
-
-    if (days.length > 0) {
-      // Extract highest day number
-      const dayNums = days.map(d => {
-        const m = d.title.match(/Day\s+(\d+)/i)
-        return m ? parseInt(m[1], 10) : 0
-      })
-      nextNum = Math.max(...dayNums, 0) + 1
-
-      // Find the last day's date to increment
-      const sortedDays = [...days].sort((a, b) => {
-        const aNum = parseInt(a.title.replace(/\D/g, ""), 10) || 0
-        const bNum = parseInt(b.title.replace(/\D/g, ""), 10) || 0
-        return aNum - bNum
-      })
-      lastDateStr = sortedDays[sortedDays.length - 1].date
-    }
-
-    // Try to parse the date and increment by 1 day
-    let nextDate = new Date()
+  const confirmDeleteDay = async () => {
+    if (!dayToDelete) return
     try {
-      const parsed = Date.parse(lastDateStr)
-      if (!isNaN(parsed)) {
-        nextDate = new Date(parsed)
-        nextDate.setDate(nextDate.getDate() + 1)
-      }
+      const response = await fetch(`${API_BASE_URL}/days/${dayToDelete}`, {
+        method: "DELETE",
+      })
+      if (!response.ok) throw new Error("Failed to delete day card")
+      
+      setDays((prevDays) => prevDays.filter((day) => day.id !== dayToDelete))
     } catch (e) {
-      console.error(e)
+      console.error("Error deleting day:", e)
+    } finally {
+      setDeleteConfirmOpen(false)
+      setDayToDelete(null)
     }
-
-    const options = { year: 'numeric', month: 'long', day: 'numeric' }
-    const formattedDate = nextDate.toLocaleDateString('en-US', options)
-
-    // Select color index
-    const colorIdx = (nextNum - 1) % GRADIENTS.length
-    // Convert strong gradient to light translucent variant for background consistency
-    const rColors = [
-      "rgba(59, 130, 246, 0.1)",
-      "rgba(16, 185, 129, 0.1)",
-      "rgba(139, 92, 246, 0.1)",
-      "rgba(245, 158, 11, 0.1)",
-      "rgba(236, 72, 153, 0.1)",
-      "rgba(20, 184, 166, 0.1)"
-    ]
-    const rColorEnd = [
-      "rgba(29, 78, 216, 0.04)",
-      "rgba(4, 120, 87, 0.04)",
-      "rgba(109, 40, 217, 0.04)",
-      "rgba(180, 83, 9, 0.04)",
-      "rgba(190, 24, 93, 0.04)",
-      "rgba(15, 118, 110, 0.04)"
-    ]
-
-    const newDay = {
-      id: `day-${Date.now()}`,
-      title: `Day ${nextNum}`,
-      date: formattedDate,
-      expenses: [],
-      color: `linear-gradient(135deg, ${rColors[colorIdx]} 0%, ${rColorEnd[colorIdx]} 100%)`,
-    }
-
-    setDays([...days, newDay])
   }
+
+  const cancelDeleteDay = () => {
+    setDeleteConfirmOpen(false)
+    setDayToDelete(null)
+  }
+
+  const handleAddDay = async () => {
+    try {
+      const response = await fetch(`${API_BASE_URL}/days`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({}),
+      })
+      if (!response.ok) throw new Error("Failed to add day card")
+      const newDay = await response.json()
+      
+      setDays((prevDays) => [...prevDays, newDay])
+    } catch (e) {
+      console.error("Error adding day card:", e)
+    }
+  }
+
+  // Handle keyboard shortcuts (Enter to confirm, Escape to cancel) when confirmation modal is active
+  useEffect(() => {
+    if (!deleteConfirmOpen) return;
+
+    const handleKeyDown = (e) => {
+      if (e.key === "Enter") {
+        e.preventDefault();
+        confirmDeleteDay();
+      } else if (e.key === "Escape") {
+        e.preventDefault();
+        cancelDeleteDay();
+      }
+    };
+
+    window.addEventListener("keydown", handleKeyDown);
+    return () => {
+      window.removeEventListener("keydown", handleKeyDown);
+    };
+  }, [deleteConfirmOpen, dayToDelete])
 
   // Calculate high-level stats
   const totalOverallSpend = days.reduce((sum, day) => 
@@ -214,6 +245,42 @@ export default function DemoOne() {
 
       </div>
 
+      {/* Date Search Bar / Small Calendar */}
+      {days.length > 0 && (
+        <div className="flex flex-col sm:flex-row items-center justify-between gap-4 bg-card/45 border border-border/55 rounded-2xl p-4 mx-4 backdrop-blur-md">
+          <div className="flex items-center gap-3">
+            <div className="w-9 h-9 rounded-lg bg-primary/10 border border-primary/20 text-primary flex items-center justify-center shrink-0">
+              <Calendar className="w-5 h-5" />
+            </div>
+            <div className="min-w-0">
+              <span className="text-xs text-muted-foreground block font-semibold uppercase tracking-wider">Search by Date</span>
+              <span className="text-sm font-bold text-card-foreground block truncate">
+                {selectedRawDate ? `Filtering for ${formatDateToDb(selectedRawDate)}` : "Showing all day cards"}
+              </span>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 w-full sm:w-auto relative">
+            <input
+              type="date"
+              value={selectedRawDate}
+              onChange={(e) => setSelectedRawDate(e.target.value)}
+              className="w-full sm:w-48 px-3 py-2 text-xs rounded-xl bg-secondary/30 border border-border/80 text-card-foreground font-semibold shadow-inner focus:outline-none focus:ring-1 focus:ring-primary/40 cursor-pointer placeholder-muted-foreground custom-date-input"
+            />
+            {selectedRawDate && (
+              <button
+                onClick={() => setSelectedRawDate("")}
+                className="absolute right-8 sm:right-8 px-1.5 py-1.5 rounded-lg hover:bg-secondary/80 text-muted-foreground hover:text-card-foreground transition-all cursor-pointer flex items-center justify-center"
+                style={{ top: "50%", transform: "translateY(-50%)" }}
+                title="Clear Filter"
+              >
+                <X className="w-3.5 h-3.5" />
+              </button>
+            )}
+          </div>
+        </div>
+      )}
+
       {days.length === 0 ? (
         <div className="border border-dashed border-border rounded-3xl p-6 sm:p-12 text-center w-[calc(100%-2rem)] sm:w-full max-w-md mx-auto space-y-4">
           <Award className="h-12 w-12 text-muted-foreground/60 mx-auto" />
@@ -228,14 +295,62 @@ export default function DemoOne() {
             </button>
           </div>
         </div>
+      ) : filteredDays.length === 0 ? (
+        <div className="border border-dashed border-border rounded-3xl p-6 sm:p-12 text-center w-[calc(100%-2rem)] sm:w-full max-w-md mx-auto space-y-4 animate-fade-in">
+          <Search className="h-12 w-12 text-muted-foreground/60 mx-auto" />
+          <h3 className="text-lg font-bold text-card-foreground">No Cards Found</h3>
+          <p className="text-sm text-muted-foreground">We couldn't find any day card matching the date <strong>{formatDateToDb(selectedRawDate)}</strong>.</p>
+          <div className="flex justify-center pt-3 gap-3">
+            <button
+              onClick={() => setSelectedRawDate("")}
+              className="px-5 py-2 text-xs rounded-xl border border-border bg-secondary/50 text-secondary-foreground font-semibold shadow-sm hover:bg-secondary transition-all cursor-pointer inline-flex items-center gap-1.5"
+            >
+              Clear Filter
+            </button>
+          </div>
+        </div>
       ) : (
         <MorphingCardStack 
-          cards={days}
+          cards={filteredDays}
           onAddExpense={handleAddExpense}
           onDeleteExpense={handleDeleteExpense}
           onDeleteDay={handleDeleteDay}
           onAddDay={handleAddDay}
         />
+      )}
+
+      {/* Custom Confirmation Modal */}
+      {deleteConfirmOpen && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm animate-fade-in">
+          <div className="bg-card/95 border border-border/80 p-6 rounded-2xl max-w-sm w-full shadow-2xl space-y-5 animate-scale-up backdrop-blur-md">
+            <div className="space-y-2">
+              <h3 className="text-lg font-bold text-card-foreground flex items-center gap-2">
+                <svg className="h-5 w-5 text-red-500" fill="none" viewBox="0 0 24 24" stroke="currentColor">
+                  <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z" />
+                </svg>
+                Delete Day Card?
+              </h3>
+              <p className="text-xs text-muted-foreground leading-relaxed">
+                Are you sure you want to delete this entire day and all its logged expenses? This action is permanent and cannot be undone.
+              </p>
+            </div>
+            
+            <div className="flex items-center justify-end gap-3 pt-1">
+              <button
+                onClick={cancelDeleteDay}
+                className="px-4 py-2 rounded-xl border border-border bg-secondary/50 text-secondary-foreground hover:bg-secondary transition-all font-semibold text-xs cursor-pointer"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={confirmDeleteDay}
+                className="px-4 py-2 rounded-xl bg-red-600 hover:bg-red-500 text-white transition-all font-semibold text-xs shadow-lg shadow-red-500/20 hover:scale-[1.02] active:scale-[0.98] cursor-pointer"
+              >
+                Yes, Delete
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </div>
   )

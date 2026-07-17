@@ -210,3 +210,40 @@ input[type="number"] {
   -moz-appearance: textfield;
 }
 
+/* Custom modal animations */
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@keyframes scaleUp {
+  from { transform: scale(0.95); opacity: 0; }
+  to { transform: scale(1); opacity: 1; }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.2s ease-out forwards;
+}
+
+.animate-scale-up {
+  animation: scaleUp 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+/* Custom HTML5 Date Input Styling */
+.custom-date-input {
+  color-scheme: dark;
+}
+
+.custom-date-input::-webkit-calendar-picker-indicator {
+  filter: invert(0.8) brightness(1.2);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: 6px;
+  transition: all 0.2s ease-out;
+}
+
+.custom-date-input::-webkit-calendar-picker-indicator:hover {
+  background-color: rgba(255, 255, 255, 0.1);
+  filter: invert(1) brightness(1.5);
+}
+
