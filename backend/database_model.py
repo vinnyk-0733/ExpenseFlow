@@ -9,7 +9,7 @@ class Day(Base):
     __tablename__ = "Days"
     
     id = Column(Integer, autoincrement=True, primary_key=True)
-    title = Column(String, nullable=False)
+    Day = Column(Integer, nullable=False)
     date = Column(String, nullable=False, index=True)
     color = Column(String, nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)

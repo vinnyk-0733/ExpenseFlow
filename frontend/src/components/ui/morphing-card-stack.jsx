@@ -270,7 +270,7 @@ export function Component({
                         <Calendar className="h-4.5 w-4.5" />
                       </div>
                       <div>
-                        <h3 className="font-semibold text-base sm:text-lg text-card-foreground tracking-tight">{card.title}</h3>
+                        <h3 className="font-semibold text-base sm:text-lg text-card-foreground tracking-tight">Day {card.Day}</h3>
                         <p className="text-[10px] sm:text-xs text-muted-foreground">{card.date}</p>
                       </div>
                     </div>
@@ -389,7 +389,7 @@ export function Component({
                         <Calendar className="h-5.5 w-5.5" />
                       </div>
                       <div>
-                        <h2 className="text-xl font-bold text-card-foreground tracking-tight">{card.title} Details</h2>
+                        <h2 className="text-xl font-bold text-card-foreground tracking-tight">Day {card.Day} Details</h2>
                         <p className="text-sm text-muted-foreground">{card.date}</p>
                       </div>
                     </div>

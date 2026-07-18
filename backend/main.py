@@ -45,25 +45,25 @@ GRADIENTS = [
 
 # Initial in-memory mock database populated with default days matching frontend
 days_db: List[dict] = [
-                {
-                    "title": "Day 1",
-                    "date": "July 8, 2026",
-                    "color": "linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.04) 100%)",
-                    "expenses": [
-                        {"category": "Food", "description": "Lunch at Pizza Hut", "amount": 25.0},
-                        {"category": "Transport", "description": "Uber to office", "amount": 18.0},
-                        {"category": "Shopping", "description": "Mechanical Keyboard", "amount": 75.0},
-                    ]
-                },
-                {
-                    "title": "Day 2",
-                    "date": "July 9, 2026",
-                    "color": "linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(4, 120, 87, 0.04) 100%)",
-                    "expenses": [
-                        {"category": "Utilities", "description": "High-speed Internet Bill", "amount": 80.0},
-                        {"category": "Food", "description": "Dinner & Drinks", "amount": 45.0},
-                    ]
-                }
+                # {
+                #     "Day": 1,
+                #     "date": "July 8, 2026",
+                #     "color": "linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.04) 100%)",
+                #     "expenses": [
+                #         {"category": "Food", "description": "Lunch at Pizza Hut", "amount": 25.0},
+                #         {"category": "Transport", "description": "Uber to office", "amount": 18.0},
+                #         {"category": "Shopping", "description": "Mechanical Keyboard", "amount": 75.0},
+                #     ]
+                # },
+                # {
+                #     "Day": 2,
+                #     "date": "July 9, 2026",
+                #     "color": "linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(4, 120, 87, 0.04) 100%)",
+                #     "expenses": [
+                #         {"category": "Utilities", "description": "High-speed Internet Bill", "amount": 80.0},
+                #         {"category": "Food", "description": "Dinner & Drinks", "amount": 45.0},
+                #     ]
+                # }
             ]
 
 # Ensure all in-memory mock items have required Pydantic fields populated
@@ -91,7 +91,7 @@ def init_db():
     try:
         count = db.query(database_model.Day).count()
         if count == 0:
-            for index, day in enumerate(days_db):
+            for day in days_db:
                 # Copy to avoid mutating the in-memory days_db
                 day_copy = day.copy()
                 expense_data = day_copy.pop("expenses", [])
@@ -100,6 +100,7 @@ def init_db():
                 day_copy.pop("id", None)
                 day_copy.pop("created_at", None)
                 
+    
                 new_day = database_model.Day(**day_copy)
                 db.add(new_day)
                 db.flush()
@@ -193,32 +194,23 @@ def get_days(db: Session = Depends(get_db)):
 def create_day(db: Session = Depends(get_db)):
     """
     Create a new Day card.
-    The ID is auto-incremented by the database, and the Title is calculated
-    based on the maximum day number in existing titles.
+    The ID is auto-incremented by the database, and the Day number is calculated
+    based on the maximum Day integer in the database.
     """
-    db_days = db.query(database_model.Day).all()
-    next_num = 1
-    if db_days:
-        import re
-        max_seen = 0
-        for day in db_days:
-            match = re.search(r"Day\s+(\d+)", day.title, re.IGNORECASE)
-            num = int(match.group(1)) if match else 0
-            if num > max_seen:
-                max_seen = num
-        next_num = max_seen + 1
+    max_day = db.query(func.max(database_model.Day.Day)).scalar() or 0
+    next_day = max_day + 1
             
     # Setup auto-generated parameters
-    title = f"Day {next_num}"
+    Day = next_day
     date = get_formatted_today()
     
     # Select color dynamically from the gradients array based on the day number
-    color_index = (next_num - 1) % len(GRADIENTS)
+    color_index = (next_day - 1) % len(GRADIENTS)
     color = GRADIENTS[color_index]
 
     # Create database record (let database handle ID auto-increment)
     db_day = database_model.Day(
-        title=title,
+        Day=Day,
         date=date,
         color=color
     )

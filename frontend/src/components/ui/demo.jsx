@@ -15,7 +15,7 @@ const GRADIENTS = [
 const DEFAULT_DAYS = [
   {
     id: "day-1",
-    title: "Day 1",
+    Day: 1,
     date: "July 8, 2026",
     expenses: [
       { id: "exp-1-1", category: "Food", description: "Lunch at Pizza Hut", amount: 25 },
@@ -26,7 +26,7 @@ const DEFAULT_DAYS = [
   },
   {
     id: "day-2",
-    title: "Day 2",
+    Day: 1,
     date: "July 9, 2026",
     expenses: [
       { id: "exp-2-1", category: "Utilities", description: "High-speed Internet Bill", amount: 80 },

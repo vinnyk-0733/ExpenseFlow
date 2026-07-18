@@ -21,7 +21,7 @@ class Expense(BaseModel):
 
 class Day(BaseModel):
     id: Union[int, str]
-    title: str
+    Day: int
     date: str
     color: str
     created_at: datetime
