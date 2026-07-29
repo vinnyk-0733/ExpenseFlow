@@ -1,6 +1,7 @@
 import { useState, useEffect } from "react"
 import { Component as MorphingCardStack } from "@/components/ui/morphing-card-stack"
 import { TrendingUp, Award, DollarSign, CalendarRange, Search, X, Calendar } from "lucide-react"
+import { apiRequest } from "@/lib/api"
 
 // Gradient presets for a premium, harmonized look
 const GRADIENTS = [
@@ -11,32 +12,6 @@ const GRADIENTS = [
   "linear-gradient(135deg, #ec4899 0%, #be185d 100%)", // Pink
   "linear-gradient(135deg, #14b8a6 0%, #0f766e 100%)", // Teal
 ]
-
-const DEFAULT_DAYS = [
-  {
-    id: "day-1",
-    Day: 1,
-    date: "July 8, 2026",
-    expenses: [
-      { id: "exp-1-1", category: "Food", description: "Lunch at Pizza Hut", amount: 25 },
-      { id: "exp-1-2", category: "Transport", description: "Uber to office", amount: 18 },
-      { id: "exp-1-3", category: "Shopping", description: "Mechanical Keyboard", amount: 75 },
-    ],
-    color: "linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.05) 100%)",
-  },
-  {
-    id: "day-2",
-    Day: 1,
-    date: "July 9, 2026",
-    expenses: [
-      { id: "exp-2-1", category: "Utilities", description: "High-speed Internet Bill", amount: 80 },
-      { id: "exp-2-2", category: "Food", description: "Dinner & Drinks", amount: 45 },
-    ],
-    color: "linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(4, 120, 87, 0.05) 100%)",
-  },
-]
-
-const API_BASE_URL = "http://127.0.0.1:8000/api"
 
 export default function DemoOne() {
   const [days, setDays] = useState([])
@@ -61,11 +36,11 @@ export default function DemoOne() {
       })
     : days;
 
-  // Fetch days from the backend database on mount
+  // Fetch days from the backend database on mount with Bearer Auth
   useEffect(() => {
     const fetchDays = async () => {
       try {
-        const response = await fetch(`${API_BASE_URL}/days`)
+        const response = await apiRequest('/api/days')
         if (!response.ok) throw new Error("Failed to fetch days")
         const data = await response.json()
         setDays(data)
@@ -79,11 +54,8 @@ export default function DemoOne() {
   // Handlers
   const handleAddExpense = async (dayId, expenseData) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/days/${dayId}/expenses`, {
+      const response = await apiRequest(`/api/days/${dayId}/expenses`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
         body: JSON.stringify(expenseData),
       })
       if (!response.ok) throw new Error("Failed to add expense")
@@ -105,9 +77,36 @@ export default function DemoOne() {
     }
   }
 
+  const handleEditExpense = async (dayId, expenseId, expenseData) => {
+    try {
+      const response = await apiRequest(`/api/days/${dayId}/expenses/${expenseId}`, {
+        method: "PUT",
+        body: JSON.stringify(expenseData),
+      })
+      if (!response.ok) throw new Error("Failed to edit expense")
+      const updatedExpense = await response.json()
+      
+      setDays((prevDays) =>
+        prevDays.map((day) => {
+          if (day.id === dayId) {
+            return {
+              ...day,
+              expenses: day.expenses.map((exp) =>
+                exp.id === expenseId ? updatedExpense : exp
+              ),
+            }
+          }
+          return day
+        })
+      )
+    } catch (e) {
+      console.error("Error editing expense:", e)
+    }
+  }
+
   const handleDeleteExpense = async (dayId, expenseId) => {
     try {
-      const response = await fetch(`${API_BASE_URL}/days/${dayId}/expenses/${expenseId}`, {
+      const response = await apiRequest(`/api/days/${dayId}/expenses/${expenseId}`, {
         method: "DELETE",
       })
       if (!response.ok) throw new Error("Failed to delete expense")
@@ -136,7 +135,7 @@ export default function DemoOne() {
   const confirmDeleteDay = async () => {
     if (!dayToDelete) return
     try {
-      const response = await fetch(`${API_BASE_URL}/days/${dayToDelete}`, {
+      const response = await apiRequest(`/api/days/${dayToDelete}`, {
         method: "DELETE",
       })
       if (!response.ok) throw new Error("Failed to delete day card")
@@ -157,12 +156,8 @@ export default function DemoOne() {
 
   const handleAddDay = async () => {
     try {
-      const response = await fetch(`${API_BASE_URL}/days`, {
+      const response = await apiRequest('/api/days', {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({}),
       })
       if (!response.ok) throw new Error("Failed to add day card")
       const newDay = await response.json()
@@ -197,8 +192,6 @@ export default function DemoOne() {
   const totalOverallSpend = days.reduce((sum, day) => 
     sum + day.expenses.reduce((dSum, exp) => dSum + exp.amount, 0)
   , 0)
-
-  const totalExpensesCount = days.reduce((sum, day) => sum + day.expenses.length, 0)
 
   const averageSpentPerDay = days.length > 0 ? Math.round(totalOverallSpend / days.length) : 0
 
@@ -313,6 +306,7 @@ export default function DemoOne() {
         <MorphingCardStack 
           cards={filteredDays}
           onAddExpense={handleAddExpense}
+          onEditExpense={handleEditExpense}
           onDeleteExpense={handleDeleteExpense}
           onDeleteDay={handleDeleteDay}
           onAddDay={handleAddDay}
@@ -355,4 +349,3 @@ export default function DemoOne() {
     </div>
   )
 }
-

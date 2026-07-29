@@ -4,14 +4,15 @@ from fastapi import FastAPI, HTTPException, status, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy import func
 from sqlalchemy.orm import Session
-from database import session, engine
+from sqlalchemy.exc import IntegrityError
+from database import engine
 import database_model
 import models
 import redis
 import json
+from auth_utils import get_db,create_access_token, create_refresh_token, hash_pin, verify_pin, verify_refresh_token, get_current_user
 
-
-
+# Auto-create tables
 try:
     database_model.Base.metadata.create_all(bind=engine)
     print("Database tables initialized successfully.")
@@ -19,21 +20,21 @@ except Exception as e:
     print(f"Skipping database table initialization: {e}")
 
 app = FastAPI(
-    title="ExpenseFlow API (Mocked Backend)",
-    description="Mocked REST API backend for ExpenseFlow tracker. Operates completely in-memory.",
+    title="ExpenseFlow API",
+    description="REST API backend for ExpenseFlow tracker with JWT Auth & Redis Caching.",
     version="1.0.0",
 )
 
 # Enable CORS so the frontend can connect
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],  # Allows all origins for development
+    allow_origins=["http://localhost:5173", "http://127.0.0.1:5173"],
     allow_credentials=True,
-    allow_methods=["*"],  # Allows all methods (GET, POST, DELETE, etc.)
-    allow_headers=["*"],  # Allows all headers
+    allow_methods=["*"],
+    allow_headers=["*"],
 )
 
-# Preset gradient colors for day cards (same as frontend)
+# Preset gradient colors for day cards
 GRADIENTS = [
     "linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.04) 100%)",   # Blue
     "linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(4, 120, 87, 0.04) 100%)",    # Emerald
@@ -43,92 +44,7 @@ GRADIENTS = [
     "linear-gradient(135deg, rgba(20, 184, 166, 0.1) 0%, rgba(15, 118, 110, 0.04) 100%)"   # Teal
 ]
 
-# Initial in-memory mock database populated with default days matching frontend
-days_db: List[dict] = [
-                # {
-                #     "Day": 1,
-                #     "date": "July 8, 2026",
-                #     "color": "linear-gradient(135deg, rgba(59, 130, 246, 0.1) 0%, rgba(29, 78, 216, 0.04) 100%)",
-                #     "expenses": [
-                #         {"category": "Food", "description": "Lunch at Pizza Hut", "amount": 25.0},
-                #         {"category": "Transport", "description": "Uber to office", "amount": 18.0},
-                #         {"category": "Shopping", "description": "Mechanical Keyboard", "amount": 75.0},
-                #     ]
-                # },
-                # {
-                #     "Day": 2,
-                #     "date": "July 9, 2026",
-                #     "color": "linear-gradient(135deg, rgba(16, 185, 129, 0.1) 0%, rgba(4, 120, 87, 0.04) 100%)",
-                #     "expenses": [
-                #         {"category": "Utilities", "description": "High-speed Internet Bill", "amount": 80.0},
-                #         {"category": "Food", "description": "Dinner & Drinks", "amount": 45.0},
-                #     ]
-                # }
-            ]
-
-# Ensure all in-memory mock items have required Pydantic fields populated
-for index, day in enumerate(days_db):
-    if "id" not in day:
-        day["id"] = f"day-{index + 1}"
-    if "created_at" not in day:
-        day["created_at"] = datetime.now()
-    for exp_index, exp in enumerate(day.get("expenses", [])):
-        if "id" not in exp:
-            exp["id"] = f"exp-{index + 1}-{exp_index + 1}"
-        if "day_id" not in exp:
-            exp["day_id"] = day["id"]
-
-
-def get_db():
-    db = session()
-    try:
-        yield db
-    finally:
-        db.close()
-
-def init_db():
-    db = session()
-    try:
-        count = db.query(database_model.Day).count()
-        if count == 0:
-            for day in days_db:
-                # Copy to avoid mutating the in-memory days_db
-                day_copy = day.copy()
-                expense_data = day_copy.pop("expenses", [])
-                
-                # Exclude created_at and id from the DB constructor since DB auto-generates created_at
-                day_copy.pop("id", None)
-                day_copy.pop("created_at", None)
-                
-    
-                new_day = database_model.Day(**day_copy)
-                db.add(new_day)
-                db.flush()
-                
-                for expense in expense_data:
-                    expense_copy = expense.copy()
-                    expense_copy.pop("id", None)
-                    expense_copy.pop("day_id", None)
-                    new_expense = database_model.Expense(
-                        day_id=new_day.id,
-                        **expense_copy
-                    )
-                    db.add(new_expense)
-            db.commit()
-            print("Database successfully seeded with default days.")
-    except Exception as e:
-        db.rollback()
-        print(f"Error seeding database: {e}")
-    finally:
-        db.close()
-
-try:
-    init_db()
-except Exception as e:
-    print(f"Error initializing/seeding database: {e}")
-    
-    
-# Initialize Redis client and ping on startup to determine if Redis is online
+# Initialize Redis client
 redis_client = None
 try:
     client = redis.Redis(
@@ -136,114 +52,220 @@ try:
         port=6379, 
         db=0, 
         decode_responses=True,
-        socket_timeout=1.0,           # 1 second timeout on commands
-        socket_connect_timeout=1.0,   # 1 second timeout on connection attempts
-        retry_on_timeout=False,       # Do not retry on timeouts
-        retry=None                    # Disable retry attempts to fail fast
+        socket_timeout=1.0,
+        socket_connect_timeout=1.0,
+        retry_on_timeout=False,
+        retry=None
     )
-    client.ping()                     # Active check to confirm connection
+    client.ping()
     redis_client = client
     print("Redis server connected successfully. Caching is enabled.")
 except Exception as e:
-    print(f"Redis server is offline: {e}. Caching is disabled (falling back to direct DB access).")
+    print(f"Redis server is offline: {e}. Caching is disabled.")
     redis_client = None
 
-# Helper to safely invalidate cache on day/expense modifications
-def invalidate_cache():
+def invalidate_user_cache(user_id: int):
     if redis_client:
         try:
-            redis_client.delete("all_days")
+            redis_client.delete(f"user_{user_id}_days")
         except Exception as e:
             print(f"Redis cache invalidation error: {e}")
-    
 
-# Helper function to format dates to match frontend format (e.g. "July 13, 2026")
 def get_formatted_today() -> str:
     now = datetime.now()
-    # Format month name and year
-    month_name = now.strftime("%B")
-    year = now.year
-    day = now.day
-    return f"{month_name} {day}, {year}"
+    return f"{now.strftime('%B')} {now.day}, {now.year}"
 
-# --- ENDPOINTS ---
+
+# ==========================================
+# AUTH ENDPOINTS
+# ==========================================
+
+@app.post("/api/auth/signup", response_model=models.TokenResponse, status_code=status.HTTP_201_CREATED)
+def signup(payload: models.UserSignUp, db: Session = Depends(get_db)):
+    """Registers a new user and returns access + refresh tokens."""
+    existing_user = db.query(database_model.User).filter(
+        database_model.User.phone_number == payload.phone_number
+    ).first()
+    
+    if existing_user:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Phone number is already registered."
+        )
+
+    hashed_pin = hash_pin(payload.pin)
+    new_user = database_model.User(
+        name=payload.name,
+        phone_number=payload.phone_number,
+        pin_hash=hashed_pin
+    )
+    db.add(new_user)
+    db.commit()
+    db.refresh(new_user)
+
+    access_token = create_access_token(user_id=new_user.id)
+    refresh_token = create_refresh_token(user_id=new_user.id)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user_name": new_user.name
+    }
+
+
+@app.post("/api/auth/signin", response_model=models.TokenResponse)
+def signin(payload: models.UserSignIn, db: Session = Depends(get_db)):
+    """Validates phone + PIN and issues access + refresh tokens."""
+    user = db.query(database_model.User).filter(
+        database_model.User.phone_number == payload.phone_number
+    ).first()
+
+    if not user or not verify_pin(payload.pin, user.pin_hash):
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED,
+            detail="Invalid phone number or PIN."
+        )
+
+    access_token = create_access_token(user_id=user.id)
+    refresh_token = create_refresh_token(user_id=user.id)
+
+    return {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
+        "token_type": "bearer",
+        "user_name": user.name
+    }
+
+
+@app.post("/api/auth/refresh")
+def refresh_access_token(payload: models.RefreshTokenRequest, db: Session = Depends(get_db)):
+    """Generates a new access token when old access token expires."""
+    user_id = verify_refresh_token(payload.refresh_token)
+    user = db.query(database_model.User).filter(database_model.User.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found.")
+
+    new_access_token = create_access_token(user_id=user.id)
+    return {
+        "access_token": new_access_token,
+        "token_type": "bearer"
+    }
+
+
+@app.get("/api/auth/me", response_model=models.UserResponse)
+def get_me(current_user: database_model.User = Depends(get_current_user)):
+    """Returns details of the currently authenticated user."""
+    return current_user
+
+
+# ==========================================
+# DAY CARDS ENDPOINTS (User-Isolated)
+# ==========================================
 
 @app.get("/api/days", response_model=List[models.Day])
-def get_days(db: Session = Depends(get_db)):
-    """Retrieve all Day cards and their associated expense history from the database."""
+def get_days(
+    db: Session = Depends(get_db), 
+    current_user: database_model.User = Depends(get_current_user)
+):
+    """Retrieve all Day cards belonging to the logged-in user."""
+    cache_key = f"user_{current_user.id}_days"
     if redis_client:
         try:
-            cache_day = redis_client.get("all_days")
-            if cache_day:
-                return json.loads(cache_day)
+            cached = redis_client.get(cache_key)
+            if cached:
+                return json.loads(cached)
         except Exception as e:
             print(f"Redis cache fetch error: {e}")
 
-    days = db.query(database_model.Day).all()
+    days = db.query(database_model.Day).filter(
+        database_model.Day.user_id == current_user.id
+    ).order_by(database_model.Day.day.asc()).all()
     
     if redis_client:
         try:
-            days_data = [models.Day.from_orm(d).dict() for d in days]
-            redis_client.setex("all_days", 3600, json.dumps(days_data, default=str))
+            days_data = [models.Day.model_validate(d).model_dump() for d in days]
+            redis_client.setex(cache_key, 3600, json.dumps(days_data, default=str))
         except Exception as e:
             print(f"Redis cache store error: {e}")
             
     return days
 
+
 @app.post("/api/days", response_model=models.Day, status_code=status.HTTP_201_CREATED)
-def create_day(db: Session = Depends(get_db)):
-    """
-    Create a new Day card.
-    The ID is auto-incremented by the database, and the Day number is calculated
-    based on the maximum Day integer in the database.
-    """
-    max_day = db.query(func.max(database_model.Day.Day)).scalar() or 0
-    next_day = max_day + 1
-            
-    # Setup auto-generated parameters
-    Day = next_day
-    date = get_formatted_today()
+def create_day(
+    db: Session = Depends(get_db),
+    current_user: database_model.User = Depends(get_current_user)
+):
+    """Create a new Day card for the authenticated user."""
+    max_day = db.query(func.max(database_model.Day.day)).filter(
+        database_model.Day.user_id == current_user.id
+    ).scalar() or 0
     
-    # Select color dynamically from the gradients array based on the day number
+    next_day = max_day + 1
+    date_str = get_formatted_today()
     color_index = (next_day - 1) % len(GRADIENTS)
     color = GRADIENTS[color_index]
 
-    # Create database record (let database handle ID auto-increment)
     db_day = database_model.Day(
-        Day=Day,
-        date=date,
+        user_id=current_user.id,
+        day=next_day,
+        date=date_str,
         color=color
     )
     db.add(db_day)
-    db.commit()
+    try:
+        db.commit()
+    except IntegrityError:
+        db.rollback()
+        raise HTTPException(status_code=409, detail="Day card already exists for this date")
     db.refresh(db_day)
     
-    invalidate_cache()
+    invalidate_user_cache(current_user.id)
     return db_day
 
+
 @app.delete("/api/days/{day_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_day(day_id: int, db: Session = Depends(get_db)):
-    """Delete a day card and all its expenses by ID from the database."""
-    db_day = db.query(database_model.Day).filter(database_model.Day.id == day_id).first()
+def delete_day(
+    day_id: int, 
+    db: Session = Depends(get_db),
+    current_user: database_model.User = Depends(get_current_user)
+):
+    """Delete a day card by ID for the logged-in user."""
+    db_day = db.query(database_model.Day).filter(
+        database_model.Day.id == day_id,
+        database_model.Day.user_id == current_user.id
+    ).first()
+
     if not db_day:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Day card with ID '{day_id}' not found."
-        )
+        raise HTTPException(status_code=404, detail="Day card not found.")
+    
     db.delete(db_day)
     db.commit()
-    invalidate_cache()
+    invalidate_user_cache(current_user.id)
     return
 
 
-# In main.py
+# ==========================================
+# EXPENSE ENDPOINTS (User-Isolated)
+# ==========================================
+
 @app.post("/api/days/{day_id}/expenses", response_model=models.Expense, status_code=status.HTTP_201_CREATED)
-def add_expense(day_id: int, expense_payload: models.ExpenseCreate, db: Session = Depends(get_db)):
-    db_day = db.query(database_model.Day).filter(database_model.Day.id == day_id).first()
+def add_expense(
+    day_id: int, 
+    expense_payload: models.ExpenseCreate, 
+    db: Session = Depends(get_db),
+    current_user: database_model.User = Depends(get_current_user)
+):
+    """Add a new expense item to a day card belonging to the user."""
+    db_day = db.query(database_model.Day).filter(
+        database_model.Day.id == day_id,
+        database_model.Day.user_id == current_user.id
+    ).first()
+
     if not db_day:
-        raise HTTPException(status_code=404, detail="Day not found")
+        raise HTTPException(status_code=404, detail="Day card not found.")
     
-    # No max_id queries or next_id calculation needed!
     db_expense = database_model.Expense(
         day_id=day_id,
         category=expense_payload.category,
@@ -253,47 +275,67 @@ def add_expense(day_id: int, expense_payload: models.ExpenseCreate, db: Session 
     db.add(db_expense)
     db.commit()
     db.refresh(db_expense)
-    invalidate_cache()
+    invalidate_user_cache(current_user.id)
     return db_expense
 
 
 @app.put("/api/days/{day_id}/expenses/{expense_id}", response_model=models.Expense)
-def edit_expense(day_id: int, expense_id: int, expense_payload: models.ExpenseCreate, db: Session = Depends(get_db)):
-    """Update an individual expense item in a specific day card inside the database."""
+def edit_expense(
+    day_id: int, 
+    expense_id: int, 
+    expense_payload: models.ExpenseCreate, 
+    db: Session = Depends(get_db),
+    current_user: database_model.User = Depends(get_current_user)
+):
+    """Update an individual expense item in a day card."""
+    db_day = db.query(database_model.Day).filter(
+        database_model.Day.id == day_id,
+        database_model.Day.user_id == current_user.id
+    ).first()
+    if not db_day:
+        raise HTTPException(status_code=404, detail="Day card not found.")
+
     db_expense = db.query(database_model.Expense).filter(
         database_model.Expense.id == expense_id,
         database_model.Expense.day_id == day_id
     ).first()
 
     if not db_expense:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Expense item with ID '{expense_id}' not found in Day card '{day_id}'."
-        )
+        raise HTTPException(status_code=404, detail="Expense item not found.")
 
     db_expense.category = expense_payload.category
     db_expense.description = expense_payload.description
     db_expense.amount = expense_payload.amount
     db.commit()
     db.refresh(db_expense)
-    invalidate_cache()
+    invalidate_user_cache(current_user.id)
     return db_expense
 
 
 @app.delete("/api/days/{day_id}/expenses/{expense_id}", status_code=status.HTTP_204_NO_CONTENT)
-def delete_expense(day_id: int, expense_id: int, db: Session = Depends(get_db)):
-    """Delete an individual expense item from a day card in the database."""
+def delete_expense(
+    day_id: int, 
+    expense_id: int, 
+    db: Session = Depends(get_db),
+    current_user: database_model.User = Depends(get_current_user)
+):
+    """Delete an individual expense item from a day card."""
+    db_day = db.query(database_model.Day).filter(
+        database_model.Day.id == day_id,
+        database_model.Day.user_id == current_user.id
+    ).first()
+    if not db_day:
+        raise HTTPException(status_code=404, detail="Day card not found.")
+
     db_expense = db.query(database_model.Expense).filter(
         database_model.Expense.id == expense_id,
         database_model.Expense.day_id == day_id
     ).first()
 
     if not db_expense:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail=f"Expense item with ID '{expense_id}' not found in Day card '{day_id}'."
-        )
+        raise HTTPException(status_code=404, detail="Expense item not found.")
+
     db.delete(db_expense)
     db.commit()
-    invalidate_cache()
+    invalidate_user_cache(current_user.id)
     return
