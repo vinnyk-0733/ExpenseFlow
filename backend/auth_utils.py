@@ -3,8 +3,9 @@ import jwt
 import bcrypt
 from fastapi import HTTPException, status, Depends
 from fastapi.security import OAuth2PasswordBearer
-from sqlalchemy.orm import Session
-from database import session
+from sqlalchemy.ext.asyncio import AsyncSession
+from sqlalchemy import select
+from database import async_session
 import database_model
 from dotenv import load_dotenv
 import os
@@ -19,7 +20,7 @@ ALGORITHM = os.getenv('ALGORITHM', 'HS256')
 ACCESS_TOKEN_EXPIRE = int(os.getenv('ACCESS_TOKEN_EXPIRE', 15))
 REFRESH_TOKEN_EXPIRE = int(os.getenv('REFRESH_TOKEN_EXPIRE', 7))
 
-oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/auth/signin")
+oauth2_scheme = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/signin")
 
 # --- PIN Hashing Helpers (Direct bcrypt, bypassing passlib version bug) ---
 def hash_pin(pin: str) -> str:
@@ -62,14 +63,11 @@ def verify_refresh_token(token: str) -> int:
         raise HTTPException(status_code=401, detail="Invalid refresh token.")
 
 # --- FastAPI Dependencies ---
-def get_db():
-    db = session()
-    try:
+async def get_db():
+    async with async_session() as db:
         yield db
-    finally:
-        db.close()
 
-def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(get_db)) -> database_model.User:
+async def get_current_user(token: str = Depends(oauth2_scheme), db: AsyncSession = Depends(get_db)) -> database_model.User:
     """Dependency to extract & validate current user from Authorization header."""
     credentials_exception = HTTPException(
         status_code=status.HTTP_401_UNAUTHORIZED,
@@ -86,7 +84,8 @@ def get_current_user(token: str = Depends(oauth2_scheme), db: Session = Depends(
     except jwt.PyJWTError:
         raise credentials_exception
 
-    user = db.query(database_model.User).filter(database_model.User.id == int(user_id)).first()
+    result = await db.execute(select(database_model.User).where(database_model.User.id == int(user_id)))
+    user = result.scalars().first()
     if user is None:
         raise credentials_exception
     return user
