@@ -5,7 +5,7 @@ on:
         branches: [main]
 
 env:
-    PYTHON-VERSION: 3.10
+    PYTHON-VERSION: "3.10"
 
 jobs:
     backend-test:
