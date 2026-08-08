@@ -5,7 +5,7 @@ on:
         branches: [main]
 
 env:
-    PYTHON-VERSION: 3.10
+    PYTHON-VERSION: 3.11
 
 jobs:
     backend-test:
@@ -17,7 +17,7 @@ jobs:
               uses: actions/checkout@v5
             
             - name: setup python
-              uses: actions/setup-python@v5
+              uses: actions/setup-python@v6
               with:
                 python-version: ${{ env.PYTHON-VERSION }}
             
