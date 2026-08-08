@@ -2,16 +2,7 @@ import { useState, useEffect } from "react"
 import { Component as MorphingCardStack } from "@/components/ui/morphing-card-stack"
 import { TrendingUp, Award, DollarSign, CalendarRange, Search, X, Calendar } from "lucide-react"
 import { apiRequest } from "@/lib/api"
-
-// Gradient presets for a premium, harmonized look
-const GRADIENTS = [
-  "linear-gradient(135deg, #3b82f6 0%, #1d4ed8 100%)", // Blue
-  "linear-gradient(135deg, #10b981 0%, #047857 100%)", // Emerald
-  "linear-gradient(135deg, #8b5cf6 0%, #6d28d9 100%)", // Purple
-  "linear-gradient(135deg, #f59e0b 0%, #b45309 100%)", // Amber
-  "linear-gradient(135deg, #ec4899 0%, #be185d 100%)", // Pink
-  "linear-gradient(135deg, #14b8a6 0%, #0f766e 100%)", // Teal
-]
+import { formatCurrency } from "@/lib/utils"
 
 export default function DemoOne() {
   const [days, setDays] = useState([])
@@ -40,10 +31,10 @@ export default function DemoOne() {
   useEffect(() => {
     const fetchDays = async () => {
       try {
-        const response = await apiRequest('/api/days')
+        const response = await apiRequest('/api/v1/days')
         if (!response.ok) throw new Error("Failed to fetch days")
         const data = await response.json()
-        setDays(data)
+        setDays(Array.isArray(data) ? data : (data.items || []))
       } catch (e) {
         console.error("Error loading days from backend:", e)
       }
@@ -54,7 +45,7 @@ export default function DemoOne() {
   // Handlers
   const handleAddExpense = async (dayId, expenseData) => {
     try {
-      const response = await apiRequest(`/api/days/${dayId}/expenses`, {
+      const response = await apiRequest(`/api/v1/days/${dayId}/expenses`, {
         method: "POST",
         body: JSON.stringify(expenseData),
       })
@@ -79,7 +70,7 @@ export default function DemoOne() {
 
   const handleEditExpense = async (dayId, expenseId, expenseData) => {
     try {
-      const response = await apiRequest(`/api/days/${dayId}/expenses/${expenseId}`, {
+      const response = await apiRequest(`/api/v1/days/${dayId}/expenses/${expenseId}`, {
         method: "PUT",
         body: JSON.stringify(expenseData),
       })
@@ -106,7 +97,7 @@ export default function DemoOne() {
 
   const handleDeleteExpense = async (dayId, expenseId) => {
     try {
-      const response = await apiRequest(`/api/days/${dayId}/expenses/${expenseId}`, {
+      const response = await apiRequest(`/api/v1/days/${dayId}/expenses/${expenseId}`, {
         method: "DELETE",
       })
       if (!response.ok) throw new Error("Failed to delete expense")
@@ -135,7 +126,7 @@ export default function DemoOne() {
   const confirmDeleteDay = async () => {
     if (!dayToDelete) return
     try {
-      const response = await apiRequest(`/api/days/${dayToDelete}`, {
+      const response = await apiRequest(`/api/v1/days/${dayToDelete}`, {
         method: "DELETE",
       })
       if (!response.ok) throw new Error("Failed to delete day card")
@@ -156,7 +147,7 @@ export default function DemoOne() {
 
   const handleAddDay = async () => {
     try {
-      const response = await apiRequest('/api/days', {
+      const response = await apiRequest('/api/v1/days', {
         method: "POST",
       })
       if (!response.ok) throw new Error("Failed to add day card")
@@ -188,12 +179,12 @@ export default function DemoOne() {
     };
   }, [deleteConfirmOpen, dayToDelete])
 
-  // Calculate high-level stats
+  // Calculate high-level stats with float parsing to prevent string concatenation
   const totalOverallSpend = days.reduce((sum, day) => 
-    sum + day.expenses.reduce((dSum, exp) => dSum + exp.amount, 0)
+    sum + day.expenses.reduce((dSum, exp) => dSum + (parseFloat(exp.amount) || 0), 0)
   , 0)
 
-  const averageSpentPerDay = days.length > 0 ? Math.round(totalOverallSpend / days.length) : 0
+  const averageSpentPerDay = days.length > 0 ? (totalOverallSpend / days.length) : 0
 
   return (
     <div className="space-y-8 w-full max-w-6xl mx-auto pb-12">
@@ -208,7 +199,7 @@ export default function DemoOne() {
           </div>
           <div className="min-w-0">
             <span className="text-xs text-muted-foreground block font-semibold uppercase tracking-wider">Overall Spending</span>
-            <span className="text-xl sm:text-2xl font-black text-card-foreground block">₹{totalOverallSpend.toLocaleString()}</span>
+            <span className="text-xl sm:text-2xl font-black text-card-foreground block">₹{formatCurrency(totalOverallSpend)}</span>
           </div>
         </div>
 
@@ -219,7 +210,7 @@ export default function DemoOne() {
           </div>
           <div className="min-w-0">
             <span className="text-xs text-muted-foreground block font-semibold uppercase tracking-wider">Avg. Spend / Day</span>
-            <span className="text-xl sm:text-2xl font-black text-card-foreground block">₹{averageSpentPerDay.toLocaleString()}</span>
+            <span className="text-xl sm:text-2xl font-black text-card-foreground block">₹{formatCurrency(averageSpentPerDay)}</span>
           </div>
         </div>
 

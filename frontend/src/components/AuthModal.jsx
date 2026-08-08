@@ -30,8 +30,8 @@ export default function AuthModal() {
       setError('Please enter a valid 10-digit phone number.');
       return;
     }
-    if (!pin || pin.length !== 4 || !/^\d{4}$/.test(pin)) {
-      setError('PIN must be exactly 4 digits.');
+    if (!pin || pin.length !== 6 || !/^\d{6}$/.test(pin)) {
+      setError('PIN must be exactly 6 digits.');
       return;
     }
 
@@ -72,7 +72,7 @@ export default function AuthModal() {
           </h2>
           <p className="text-xs md:text-sm text-muted-foreground">
             {isSignUp
-              ? 'Sign up with your phone number and 4-digit PIN'
+              ? 'Sign up with your phone number and 6-digit PIN'
               : 'Enter your phone number & PIN to access your expenses'}
           </p>
         </div>
@@ -179,15 +179,15 @@ export default function AuthModal() {
 
           <div className="space-y-1">
             <label className="text-xs font-medium text-muted-foreground flex items-center gap-1.5">
-              <Lock className="w-3.5 h-3.5 text-primary" /> 4-Digit Security PIN
+              <Lock className="w-3.5 h-3.5 text-primary" /> 6-Digit Security PIN
             </label>
             <div className="relative">
               <input
                 type={showPin ? 'text' : 'password'}
-                placeholder="••••"
+                placeholder="••••••"
                 value={pin}
-                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 4))}
-                maxLength={4}
+                onChange={(e) => setPin(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                maxLength={6}
                 className="w-full px-3.5 py-2.5 rounded-xl border border-input bg-background/50 text-foreground text-sm tracking-widest focus:outline-none focus:ring-2 focus:ring-primary/40 transition-all"
                 required
               />

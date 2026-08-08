@@ -2,7 +2,7 @@
 
 import { useState, useEffect } from "react"
 import { motion, AnimatePresence, useMotionValue } from "framer-motion"
-import { cn } from "@/lib/utils"
+import { cn, formatCurrency } from "@/lib/utils"
 import { 
   Grid3X3, 
   Layers, 
@@ -199,7 +199,7 @@ export function Component({
           {displayCards.map((card) => {
             const styles = getLayoutStyles(card.stackPosition)
             const isTopCard = layout === "stack" && card.stackPosition === 0
-            const dayTotal = card.expenses.reduce((sum, item) => sum + item.amount, 0)
+            const dayTotal = card.expenses.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0)
 
             return (
               <motion.div
@@ -291,7 +291,7 @@ export function Component({
                     <div>
                       <span className="text-[10px] sm:text-xs text-muted-foreground block font-medium uppercase tracking-wider">Total Spent</span>
                       <span className="text-xl sm:text-2xl font-bold text-card-foreground">
-                        ₹{dayTotal.toLocaleString()}
+                        ₹{formatCurrency(dayTotal)}
                       </span>
                     </div>
                     <div>
@@ -350,7 +350,7 @@ export function Component({
         {expandedCard && (() => {
           const card = cards.find(c => c.id === expandedCard)
           if (!card) return null
-          const dayTotal = card.expenses.reduce((sum, item) => sum + item.amount, 0)
+          const dayTotal = card.expenses.reduce((sum, item) => sum + (parseFloat(item.amount) || 0), 0)
 
           return (
             <>
@@ -379,53 +379,48 @@ export function Component({
                     background: "var(--card-bg)",
                   }}
                 >
-                  {/* Mobile Drag Handle */}
-                  <div className="w-12 h-1.5 bg-muted-foreground/20 rounded-full mx-auto my-3 sm:hidden shrink-0" />
                   
                   {/* Modal Header */}
-                  <div className="p-4 sm:p-6 border-b border-border/60 flex items-start justify-between bg-secondary/30">
+                  <div className="p-5 sm:p-6 border-b border-border/60 flex items-center justify-between bg-secondary/30">
                     <div className="flex items-center gap-3">
-                      <div className="flex h-11 w-11 items-center justify-center rounded-xl bg-primary/10 text-primary border border-primary/20">
-                        <Calendar className="h-5.5 w-5.5" />
+                      <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-primary/10 text-primary border border-primary/20 shrink-0">
+                        <Calendar className="h-5 w-5" />
                       </div>
                       <div>
-                        <h2 className="text-xl font-bold text-card-foreground tracking-tight">Day {card.day} Details</h2>
-                        <p className="text-sm text-muted-foreground">{card.date}</p>
+                        <h2 className="text-xl font-bold text-card-foreground">Day {card.day}</h2>
+                        <p className="text-xs text-muted-foreground">{card.date}</p>
                       </div>
                     </div>
                     
-                    <button
-                      onClick={() => setExpandedCard(null)}
-                      className="p-1.5 rounded-full text-muted-foreground hover:text-foreground hover:bg-secondary transition-colors cursor-pointer border border-border/40"
-                    >
-                      <X className="h-5 w-5" />
-                    </button>
+                    <div className="flex items-center gap-3">
+                      <div className="text-right hidden sm:block">
+                        <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider block">Day Total</span>
+                        <span className="text-lg font-black text-card-foreground">₹{formatCurrency(dayTotal)}</span>
+                      </div>
+                      <button
+                        onClick={() => setExpandedCard(null)}
+                        className="p-2 rounded-full hover:bg-secondary text-muted-foreground hover:text-foreground transition-colors cursor-pointer"
+                        aria-label="Close dialog"
+                      >
+                        <X className="h-5 w-5" />
+                      </button>
+                    </div>
                   </div>
 
-                  {/* Modal Body (Scrollable content) */}
-                  <div className="flex-1 overflow-y-auto p-4 sm:p-6 space-y-6">
+                  {/* Modal Content Scroll Area */}
+                  <div className="flex-1 overflow-y-auto p-5 sm:p-6 space-y-6">
                     
-                    {/* Sum display at the top of detail */}
-                    <div className="bg-gradient-to-br from-primary/10 to-primary/5 rounded-2xl p-4 sm:p-5 border border-primary/15 flex items-center justify-between">
-                      <div>
-                        <span className="text-sm font-semibold uppercase tracking-wider text-primary/70 block">
-                          Total Expense for the Day
-                        </span>
-                        <span className="text-2xl sm:text-3xl font-extrabold text-card-foreground mt-1 block">
-                          ₹{dayTotal.toLocaleString()}
-                        </span>
-                      </div>
-                      <div className="h-10 w-10 sm:h-12 sm:w-12 rounded-full bg-primary/15 flex items-center justify-center text-primary text-xl font-bold">
-                        ₹
-                      </div>
-                    </div>
-
-                    {/* Expense list section */}
+                    {/* Expenses List */}
                     <div className="space-y-3">
-                      <h4 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
-                        <Tag className="h-4 w-4" />
-                        <span>Expenses History ({card.expenses.length})</span>
-                      </h4>
+                      <div className="flex items-center justify-between">
+                        <h3 className="text-sm font-bold uppercase tracking-wider text-muted-foreground flex items-center gap-1.5">
+                          <Tag className="h-4 w-4" />
+                          <span>Expenses ({card.expenses.length})</span>
+                        </h3>
+                        <span className="text-xs font-bold text-primary sm:hidden">
+                          Total: ₹{formatCurrency(dayTotal)}
+                        </span>
+                      </div>
 
                       {card.expenses.length === 0 ? (
                         <div className="border border-dashed border-border rounded-2xl p-6 sm:p-8 text-center text-muted-foreground">
@@ -465,7 +460,7 @@ export function Component({
                                 </div>
                                 <div className="flex items-center gap-3 shrink-0">
                                   <span className="font-bold text-sm text-card-foreground">
-                                    -₹{expense.amount.toLocaleString()}
+                                    -₹{formatCurrency(expense.amount)}
                                   </span>
                                   <button
                                     onClick={() => onDeleteExpense(card.id, expense.id)}
